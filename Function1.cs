@@ -23,7 +23,6 @@ namespace IngressService
 
                 var blobClient = new BlobClient(connectionString, containerName, blobName);
                 var blobContent = blobClient.DownloadContent().Value.Content.ToString();
-
                 _keyMap = JsonSerializer.Deserialize<Dictionary<string, string>>(blobContent)
                           ?? new Dictionary<string, string>();
             }
