@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Microsoft.AspNetCore.Http;
+using Azure.Storage.Blobs;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -14,29 +14,36 @@ namespace IngressService
         public Function1(ILogger<Function1> logger)
         {
             _logger = logger;
-            // Load mapping from file at startup (you can move this to DI for prod)
+
             try
             {
-                var mappingJson = File.ReadAllText("mappings.json");
-                _keyMap = JsonSerializer.Deserialize<Dictionary<string, string>>(mappingJson);
+                string connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
+                string containerName = "mappers";
+                string blobName = "mappings.json";
+
+                var blobClient = new BlobClient(connectionString, containerName, blobName);
+                var blobContent = blobClient.DownloadContent().Value.Content.ToString();
+
+                _keyMap = JsonSerializer.Deserialize<Dictionary<string, string>>(blobContent)
+                          ?? new Dictionary<string, string>();
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                throw;
+                _logger.LogError(ex, "Failed to load mapping file from blob storage.");
+                _keyMap = new Dictionary<string, string>();
             }
         }
 
         [Function("Function1")]
-        public async Task<HttpResponseData> Run(
+        [ServiceBusOutput("dev-messages", Connection = "ServiceBusConnection", EntityType = ServiceBusEntityType.Topic)]
+        public async Task<string> Run(
             [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req)
         {
             _logger.LogInformation("Processing request...");
 
-            // Read request body
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             var inputData = JsonSerializer.Deserialize<Dictionary<string, object>>(requestBody);
 
-            // Transform based on mapping
             var outputData = new Dictionary<string, object>();
             foreach (var (inputKey, outputKey) in _keyMap)
             {
@@ -45,10 +52,7 @@ namespace IngressService
                     outputData[outputKey] = value;
                 }
             }
-
-            var response = req.CreateResponse(System.Net.HttpStatusCode.OK);
-            await response.WriteAsJsonAsync(outputData);
-            return response;
+            return JsonSerializer.Serialize(outputData);
         }
     }
 }
